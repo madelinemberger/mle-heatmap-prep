@@ -20,7 +20,7 @@
 
 # get list of shapefile files
 
-ss_raw_shps <- list.files(file.path(paste0(maldives_dir,"/inputs/shapefiles/seasketch/",report_date)),
+ss_raw_shps <- list.files(file.path(paste0(in_dir,"/inputs/shapefiles/",report_date)),
                           pattern = ".shp", 
                           full.names = T)
 
