@@ -1,0 +1,1081 @@
+---
+title: "Maldives Ocean Use Survey - Week 17 Update Report"
+author: "Maddie Berger"
+date: "`r Sys.Date()`"
+header-includes:
+   - \usepackage[defaultfam,tabular,lining]{montserrat}
+   - \usepackage[T1]{fontenc}
+output: 
+  html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    number_sections: yes
+    #df_print: kable
+    #extra_dependencies: ["flafter"]
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, fig.pos = "!H")
+
+# packages
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(sf)
+library(janitor)
+library(here)
+library(rgeos)
+library(mapview)
+library(foreach)
+library(scales)
+library(kableExtra)
+library(formattable)
+
+# directory and helpful function 
+maldives_dir <- here("maldives")
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+
+source(file.path(maldives_dir,"reports/set_up.R"))
+
+
+#report_date <- "09-14-21" # this might not be useful 
+report_date <- "2022-04-13"
+previous_dd <- "2022-04-08" # use this for the "new this week" updates
+
+# respondent info created in prep script (might not need both)
+
+respondent_info <- read_csv(paste0(maldives_dir,"/outputs/data_for_report/all-respondents-",
+                          report_date,".csv")) %>% 
+  mutate(
+    sector = case_when(
+      sector == "con_inf_area" ~ "Construction and Infrastructure",
+      sector == "Utilties" ~ "Utilities",
+      sector == "Rec Fishing" ~ "Recreational Fishing",
+      sector == "Fishing" ~ "Commercial Tuna Fishing",
+      sector == "defense_area" ~ "Safety and Defense",
+      sector == "shipping_area" ~ "Shipping",
+      TRUE ~ sector)
+  )
+#full_info <- read_csv(file.path(maldives_dir,"outputs/r/ss_full_info.csv"))
+
+# create all other lists by running:
+
+source(file.path(maldives_dir,"R/report_prep.R"))
+
+# read in population targets
+
+island_atoll_all <- read_csv(file.path(maldives_dir,"inputs/csv/static/islands_atoll_tidy_final.csv")) %>% 
+  clean_names() %>% 
+  mutate(survey_target = as.numeric(survey_target)) %>% 
+  mutate(atoll = ifelse(atoll == "S","Addu City",atoll))
+
+atoll_level_pop <- island_atoll_all %>% 
+  filter(!is.na(survey_target)) %>% 
+  filter(population != "Resort") %>% 
+  group_by(atoll) %>% 
+  summarize(
+    Atoll_Target = sum(survey_target)
+  )
+
+resort_island_targets <- island_atoll_all %>% 
+  filter(population == "Resort")
+
+industrial_islands <-  island_atoll_all %>% 
+  filter(population == "Industrial")
+
+inhabited_islands <- island_atoll_all %>% 
+  filter(population != "Resort")
+
+# read in other targets
+
+fisher_targets <- read_csv(file.path(maldives_dir,"outputs/target_tables/comm_fisheries_targets.csv")) %>% 
+  dplyr::select(atoll, island, contains("_target"))
+
+```
+
+## Summary
+
+```{r number_sum, message=FALSE, echo = FALSE, warning=FALSE}
+
+
+total_responses <- nrow(respondent_info)
+
+total_people <- respondent_info %>% 
+  dplyr::select(resp_id,facilitator_email,name,number_of_ppl,sector, atoll, island) %>%
+  mutate(
+  #   person = case_when(
+  #     is.na(name_self) ~ resp_name,
+  #     is.na(resp_name) ~ name_self,
+  #     TRUE ~ resp_name
+  #   ),
+    #person = str_to_lower(person),
+    number_of_ppl = ifelse(is.na(number_of_ppl),1,number_of_ppl)
+  ) %>% 
+  dplyr::select(resp_id,facilitator_email, name,number_of_ppl,atoll,island) %>% 
+  distinct() %>% 
+  mutate(
+    name = str_to_lower(name)
+  )
+
+# determine how much the total_people is likely over estimating
+
+total_test <- total_people %>% 
+  group_by(facilitator_email,name,island,atoll) %>% 
+  summarize(
+    N = length(unique(resp_id))
+  ) %>% 
+  ungroup()
+
+duplicates <- total_test %>% 
+  filter(N > 1)
+
+write_csv(duplicates,
+          file.path(maldives_dir,"outputs/duplicates.csv"))
+  
+
+total_count <- sum(total_people$number_of_ppl) - nrow(total_test)
+
+total_respondents <- length(unique(total_people$name))
+
+```
+
+This report includes all data collected between 12-03-21 and 04-13-2022.
+
+
+- **`r total_responses`** responses were collected
+- From **`r total_respondents` ** respondents
+- Representing **`r as.integer(total_count)`** people 
+- Over **14,600** shapes have been drawn
+
+```{r progress_line, echo = FALSE, message = FALSE, warning=FALSE}
+
+# create dataframe for line graph, adding new data as it comes in
+
+progress_line_df <- data.frame(
+  week = c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17),
+  `Total People` = c(740,992,1819,2338,3024,3250,3424,3739,4865,6006,6168,7458,8736,10397,11318,11675,total_count),
+  `Total Responses` = c(270,343,513,613,758,874,949,1009,1353,1590,1649,1899,2098,2393,2520,2582,total_responses),
+  `Total Respondents` = c(122,178,438,534,649,742,805,856,1090,1269,1311,1511,1672,1883,1969,2017,total_respondents)
+) %>% 
+  gather(key = "variable",value = "N", -week)
+
+# create line graph 
+
+progress_line <- ggplot(progress_line_df, aes(x=week, y =N)) + 
+  geom_line(aes(color = variable
+                #linetype = variable
+                )) + 
+  scale_color_manual(values = c("aquamarine3", "steelblue","goldenrod1")) + 
+  labs(x = "Week Since Deployment", y = "N", color = "Count Type")+
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 7))+
+  #scale_y_continuous(expand = c(0,6000),breaks = round(seq(0, 6000, by = 1000),1))+
+  #scale_y_continuous(expand = c(0,6000), breaks = c(0,6000), by = 1000)+
+  scale_y_continuous(limits = c(0, 13000),
+                     breaks = seq(0,13000,1000))+
+  #geom_hline(yintercept=9000, linetype='dotted', col = 'red')+
+  #annotate("text", x = 5, y = 9000, label = "~50% of Cumulative Survey Target", vjust = -0.5, size = 3)+
+  geom_hline(yintercept=6161, linetype='dotted', col = 'red')+
+  annotate("text", x = 5, y = 6161, label = "~50% of Population Survey Target", vjust = -0.5, size = 3)+
+  geom_hline(yintercept=12322, linetype='dotted', col = 'red')+
+  annotate("text", x = 5, y = 12322, label = "100% Population Survey Target", vjust = -0.5, size = 3)+
+  theme_minimal() 
+
+progress_line
+
+ggsave(filename = "week13_progline.png",
+       device = "png",
+       path = "~/github/survey_results/maldives/outputs/figures",
+       width = 7,
+       height = 4,
+       units = "in",
+       dpi = 300)
+
+
+```
+
+
+## Progress By Sector:
+
+### This week: 
+
+
+```{r sector_wk, message=FALSE, echo = FALSE, warning=FALSE}
+
+func <- function(z) if (is.numeric(z)) sum(z) else ''
+
+############# new this week responses by sectors, Maptionnaire versus SeaSketch with totals row. 
+
+sector_week_summary <- respondent_info %>% 
+  filter(date > previous_dd) %>% 
+  group_by(sector, source) %>% 
+  summarize(
+    N = length(resp_id)
+  ) %>%
+  ungroup() %>% 
+  pivot_wider(id_cols = "sector", names_from = source, values_from = N) %>%
+  mutate_if(is.integer, ~replace(., is.na(.), 0)) %>% #replace NAs with 0 so you can add them toegether
+ mutate(
+    Total = SeaSketch #+ Maptionnaire,
+  )
+
+sumrow_wk <- as.data.frame(lapply(sector_week_summary,func))
+
+#give name to first element of new data frame created above: 
+
+sumrow_wk[1] <- "Total"
+
+weekly_results_df <- rbind(sector_week_summary,sumrow_wk)
+
+
+knitr::kable(weekly_results_df,
+             col.names = c("Sector","SeaSketch","Total"),
+             caption = "Responses by Sector This Week",
+             booktabs = T) %>% 
+  kable_styling(full_width = F,
+                bootstrap_options = c("striped","hover")) %>% 
+  row_spec(dim(weekly_results_df)[1], bold = T) %>% 
+  column_spec(1, italic = T)
+
+```
+
+### Cummulative Responses:
+
+Cumulative sectors by Maptionnaire versus SeaSketch, with totals row
+
+```{r sector_cumm, message=FALSE, echo = FALSE, warning=FALSE}
+
+sector_full_summary <- respondent_info %>%
+  group_by(sector, source) %>%
+  summarize(
+    N = length(resp_id)
+  ) %>%
+  ungroup() %>%
+  pivot_wider(id_cols = "sector", names_from = source, values_from = N) %>%
+  mutate_if(is.integer, ~replace(., is.na(.), 0)) %>% #replace NAs with 0 so you can add them toegether
+ mutate(
+    Total = SeaSketch + Maptionnaire,
+  )
+
+
+sumrow <- as.data.frame(lapply(sector_full_summary,func))
+
+#give name to first element of new data frame created above:
+
+sumrow[1] <- "Total"
+
+summed_results_df <- rbind(sector_full_summary,sumrow)
+
+
+###################### create tables
+
+knitr::kable(summed_results_df,
+             col.names = c("Sector","SeaSketch","Maptionnaire","Total"),
+             caption = "Responses by Sector Cummulative",
+             booktabs = T) %>%
+  kable_styling(full_width = F,
+                bootstrap_options = c("striped","hover")) %>%
+  row_spec(dim(summed_results_df)[1], bold = T) %>%
+  column_spec(1, italic = T)
+
+
+```
+
+            
+## Responses by Atoll
+
+```{r atoll_summ, echo = FALSE, message = FALSE, warning = FALSE}
+# 
+# library(formattable)
+# 
+# 
+# # get everything fixed up 
+# 
+
+geo_numofpeople <- respondent_info %>%
+  select(facilitator_email,name,sector,number_of_ppl,atoll, island) %>%
+  mutate(
+    # person = case_when(
+    #   is.na(name_self) ~ resp_name,
+    #   is.na(resp_name) ~ name_self,
+    #   TRUE ~ resp_name),
+    # person = str_to_lower(person),
+    number_of_ppl = ifelse(is.na(number_of_ppl),1,number_of_ppl),
+    atoll = ifelse(island == "Ken'dhikulhudhoo","N",atoll)
+  ) %>%
+  dplyr::select(atoll,island,name, number_of_ppl) %>%
+  distinct()
+# 
+# # again - how many individuals? or pull this in for 
+# total_respondents <- length(unique(geo_numofpeople$person))
+# 
+# # find problematic island atoll combinations
+
+# island_fix <- respondent_info %>%
+#   dplyr::select(resp_id,facilitator_email,name_self=name,resp_name,sector,number_of_ppl,atoll, island) %>%
+#   #filter(!str_detect(atoll, "option")) %>%
+#   # group_by(atoll, island) %>%
+#   # summarize(
+#   #   Responses = sum(number_of_ppl)
+#   # ) %>%
+#   # ungroup() %>%
+#   rename(resp_atoll = atoll) %>%
+#   filter(island %!in% resort_island_targets$island) %>%
+#   left_join(.,island_atoll_all, by = c("island")) %>%
+#   mutate(
+#     atoll_match = ifelse(resp_atoll == atoll, TRUE, FALSE)
+#   ) %>%
+#   filter(atoll_match == FALSE)
+# # 
+# # ids_island_fix <- unique(island_fix$resp_id)
+# 
+# ##
+island_summary <- geo_numofpeople %>%
+  #filter(!str_detect(atoll, "option")) %>%
+  group_by(atoll, island) %>%
+  summarize(
+    Responses = sum(number_of_ppl)
+  ) %>%
+  ungroup() %>%
+  left_join(.,resort_island_targets, by = c("atoll","island")) %>%
+  filter(is.na(population)) %>%
+  dplyr::select(-population,-survey_target) %>%
+  #filter(island %!in% industrial_islands$island) %>%
+  left_join(.,island_atoll_all, by = c("atoll","island")) %>%
+  dplyr::select(
+    Atoll = atoll,
+    Island = island,
+    Responses = Responses,
+    Target=survey_target
+  ) %>%
+  mutate(
+    Target = ifelse(is.na(Target),1,Target),
+    Progress = as.numeric(round((Responses/Target)*100, digits = 0)),
+    Progress = ifelse(Progress > 100,100,Progress)
+  ) %>%
+  mutate(
+    Progress = color_bar("lightblue", proportion)(Progress)
+  )
+# 
+# ## Resort islands 
+#   
+# # list them
+# 
+resort_islands <- geo_numofpeople %>%
+  group_by(atoll, island) %>%
+  summarize(
+    Responses = sum(number_of_ppl)
+  ) %>%
+  ungroup() %>%
+  left_join(.,resort_island_targets, by = c("atoll","island")) %>%
+  filter(!is.na(population)) %>%
+  dplyr::select(-population, -survey_target)
+
+# # total with progress bar 
+#function for 1 bar
+
+unit.scale = function(x) (x) / (100)
+#   
+resort_progress <- data.frame(
+  resort_resp = nrow(resort_islands),
+  target = nrow(resort_island_targets)
+) %>%
+  mutate(
+     Progress = as.numeric(round((resort_resp/target), digits = 2)*100)
+  ) %>%
+  mutate(
+    Progress = color_bar("lightblue", fun = unit.scale)(Progress)
+  )
+
+island_progress <- data.frame(
+  islands = nrow(island_summary),
+  target = 189) %>%
+  mutate(Progress = as.numeric(round((islands/target), digits = 2)*100)) %>% 
+  mutate(Progress = color_bar("lightblue", fun = unit.scale)(Progress))
+# 
+knitr::kable(island_progress,
+             caption = "Island Progress",
+             escape = F,
+             col.names = c("Islands Surveyed","Target","Progress %")
+             ) %>%
+  kable_styling("hover", full_width = F) %>%
+  column_spec(3, width = "4cm")
+# 
+# # create and format table. Break out progress bar if needed. 
+
+
+knitr::kable(island_summary,
+             caption = "Total Accumulated Responses by Atoll and Island",
+             escape = F,
+             col.names = c("Atoll","Island","People Represented","Target","Progress %")
+             ) %>%
+  kable_styling("hover", full_width = F) %>%
+  column_spec(5, width = "5cm") %>%
+  scroll_box(height = "900px",
+             width = "900px"
+             )
+# 
+# 
+# # List resort progress
+# 
+knitr::kable(resort_progress,
+             caption = "Resort Progress",
+             escape = F,
+             col.names = c("Resort Responses","Target","Progress %")
+             ) %>%
+  kable_styling("hover", full_width = F) %>%
+  column_spec(3, width = "4cm")
+# 
+# 
+# # List resorts
+# 
+knitr::kable(resort_islands,
+             caption = "Resort Islands",
+             escape = F,
+             col.names = c("Atoll","Island","Number of People")
+             ) %>%
+  kable_styling("hover", full_width = F)
+# 
+
+
+```
+
+```{r atollbar, echo = FALSE, message = FALSE, warning = FALSE}
+
+sector_island <- respondent_info %>%
+  mutate(
+    island_adm = paste0(atoll,".",island)
+  ) %>% 
+  group_by(sector, island_adm) %>%
+  summarize(
+    N = length(resp_id)
+  ) %>%
+  ungroup()
+
+sector_atoll <- respondent_info %>%
+  group_by(sector, atoll) %>%
+  summarize(
+    N = length(resp_id)
+  ) %>%
+  ungroup() %>% 
+  arrange(N)
+
+
+sector_atoll_bar <- sector_atoll %>%
+  ggplot(aes(x=atoll, y = N, fill=sector), color = NA) +
+    geom_bar(stat = "identity")+
+    scale_fill_manual(values = atoll_sec_pal,
+                      limits = names(atoll_sec_pal)) +
+    theme_minimal() +
+    labs(fill="Sector", x = "Islands", y = "Responses")+
+  scale_y_continuous(expand = c(0,0),
+                     limits = c(0,450)
+                     )+
+  theme_classic()+
+  coord_flip()
+sector_atoll_bar
+
+```
+
+```{r secisl, echo = FALSE, message = FALSE, warning = FALSE, fig.height= 14, fig.width=8}
+
+sector_island_bar <- sector_island %>%
+  ggplot(aes(x=island_adm, y = N, fill=sector), color = NA) +
+    geom_bar(stat = "identity")+
+    scale_fill_manual(values = atoll_sec_pal,
+                      limits = names(atoll_sec_pal)) +
+    theme_minimal() +
+    labs(fill="Sector", x = "Islands", y = "Responses")+
+  scale_y_continuous(expand = c(0,0),
+                     limits = c(0,150)
+                     )+
+  theme_classic()+
+  coord_flip()
+sector_island_bar
+
+```
+
+  
+## Gender and Age Breakdown
+
+
+```{r age_calc, echo = FALSE, message = FALSE, warning = FALSE}
+
+# group and calculate - with real results, tweak the "rather not say" 
+age_gender <- respondent_info %>%
+  dplyr::select(facilitator_email,name,sector,age,gender) %>% 
+  mutate( 
+    # person = case_when(
+    #   is.na(name_self) ~ resp_name,
+    #   is.na(resp_name) ~ name_self,
+    #   TRUE ~ resp_name),
+    # person = str_to_lower(person),
+    #number_of_ppl = ifelse(is.na(number_of_ppl),1,number_of_ppl)
+  ) %>%
+  dplyr::select(facilitator_email,name,age,gender) %>% 
+  distinct()
+
+# calculate values to pull into text or a table?
+
+age_only <- age_gender %>% 
+  filter(!is.na(age)) %>% 
+  filter(age != 0) %>% 
+  mutate(age = as.numeric(age))
+
+median_age <- median(age_only$age)
+
+mean_age <- round(mean(age_only$age), digits = 0)
+
+min_age <- min(age_only$age)
+
+max_age <- max(age_only$age)
+
+gender_only <- age_gender %>% 
+  filter(!is.na(gender)) %>% 
+  count(gender)
+  
+num_men <- gender_only$n[2]
+
+num_women <- gender_only$n[1]
+
+num_notsay <- age_gender %>% 
+  filter(is.na(gender)) %>%
+  nrow()
+
+age_gender_graph <- age_gender %>% 
+  filter(!is.na(gender)) %>%
+  filter(!is.na(age)) %>%
+  filter(age != 0) %>% 
+  mutate(age = as.numeric(age))
+
+```
+
+Of the respondents who provided demographic information, the average age is **`r mean_age`**, with a maximum age of **`r max_age`** and a minimum of **`r min_age`**. The median age is **`r median_age`**.
+
+**`r num_men`** are men, **`r num_women`** are women, and **`r num_notsay`** did not specify their gender. 
+
+```{r age_gender_graph, echo = FALSE, message = FALSE, warning = FALSE}
+
+# create bar graph and format
+# histogram
+
+age_range <- age_gender_graph$age %>% cut(., c(1,13,24,34,44,54,64,74,101),
+      labels=c("under 14", "14-24", "25–34", "35–44", "45–54", "55–64", "65–74", "75+"))
+  
+age_gender_hist <- age_gender_graph %>%
+  cbind(age_range) %>% 
+  group_by(age_range, gender) %>% 
+  count(age_range) %>% 
+  ggplot(aes(x=age_range, y = n, fill=gender), color = NA) +
+    geom_bar(stat = "identity")+
+    scale_fill_manual(values=c("#BDD9BF", "#2E4052", "#FFC857")) +
+    theme_minimal() +
+    labs(fill="Gender", x = "Age", y = "Count")+
+  scale_y_continuous(expand = c(0,0), limits = c(0,700))
+
+age_gender_hist
+
+
+
+```
+
+
+
+## Group Responses vs. Individual Responses:
+
+```{r, group_stats, echo = FALSE, message = FALSE, warning=FALSE}
+# group summary statistics 
+
+group_resp <- respondent_info %>% 
+  filter(number_of_ppl > 1)
+
+mean_grp <- round(mean(group_resp$number_of_ppl), digits = 0)
+
+max_grp <- max(group_resp$number_of_ppl)
+
+
+```
+
+- There are **`r nrow(group_resp)`** responses that represented a group, or more than one person. 
+- The average group size is **`r mean_grp`**
+- The largest group surveyed represents  **`r max_grp`** people.
+
+```{r group_resp, echo=FALSE, message=FALSE, warning = FALSE}
+
+group_size <- group_resp$number_of_ppl %>% 
+  cut(.,c(0,4,9,20,49,99,150),
+      labels = c("0-4","5-10","11-20","21-50","51-100","50+"))
+
+group_stats <- group_resp %>% 
+  cbind(group_size) %>% 
+  count(group_size)
+
+# filter out large group sizes. 
+
+# create table
+
+knitr::kable(group_stats,
+             col.names = c("Group Size", "Number of Responses"),
+             caption = "Group Reponse Size") %>% 
+  kable_styling(bootstrap_options = c("striped"), full_width = F)
+
+
+## all groups 15 or above: 
+
+large_groups <- respondent_info %>% 
+  filter(number_of_ppl > 14) %>% 
+  dplyr::select(
+    atoll,
+    island,
+    name,
+    facilitator_name,
+    number_of_ppl,
+    sector,
+    date
+  ) %>% 
+  mutate(
+    number_of_ppl = as.numeric(number_of_ppl),
+    number_of_ppl = ifelse(number_of_ppl > 20,
+                           cell_spec(number_of_ppl,"html",color="red",bold = T),
+                           cell_spec(number_of_ppl,"html",color="pink",bold = F)),
+    name = ifelse(is.na(name),
+                           cell_spec(name,"html",color="lightgrey",bold = F),
+                           cell_spec(name,"html",color="black",bold = F)),
+    facilitator_name = ifelse(is.na(facilitator_name),
+                           cell_spec(facilitator_name,"html",color="lightgrey",bold = F),
+                           cell_spec(facilitator_name,"html",color="black",bold = F))
+  )
+
+
+knitr::kable(large_groups,
+             escape = F,
+             col.names = c("Atoll","Island","Name","Facilitator Name","Group Size","Sector","Date"),
+             caption = "Groups Larger than 15") %>% 
+  kable_styling("hover") %>% 
+  scroll_box(height = "400px")
+
+  
+
+```
+  
+    
+      
+      
+
+## Fishers
+
+The two tables below list the fishers that have responded to the survey by atoll, with tallies for pelagic fishers, reef fishers, full time fishers, and part time fishers. The second table lists the fisher responses we have received from islands without a fisher target from the phone survey data. 
+
+```{r part_full_fish, echo = FALSE, message=FALSE, warning=FALSE}
+# # add totals at bottom 
+# # calculate stats overall: 
+# 
+library(RColorBrewer)
+
+full_fisher_list <- all_commercial_fishers
+
+total_fishers <- nrow(full_fisher_list)
+
+no_answer <- full_fisher_list %>%
+  filter(is.na(part_full_time)) %>%
+  nrow()
+
+fulltime <- comm_full_table_export %>%
+  filter(!is.na(`Full Time`)) %>%
+  mutate(`Full Time` = as.numeric(`Full Time`))
+
+total_fulltime <- sum(fulltime$`Full Time`)
+
+parttime <- comm_full_table_export %>%
+  filter(!is.na(`Part Time`)) %>%
+  mutate(`Part Time` = as.numeric(`Part Time`))
+
+total_parttime <- sum(parttime$`Part Time`)
+
+#######################
+# get lists of rec and artisanal fishers
+
+# rec_fishers <- respondent_info %>%
+#   filter(sector == "Recreational Fishing") %>% # this is why its not picking them up
+#   select(resp_id,atoll,island,number_of_ppl,name) %>%
+#   distinct() %>%
+#   group_by(atoll,island) %>%
+#   summarize(
+#     total_rec = sum(number_of_ppl)
+#   )
+#
+# artisanal_fishers <- respondent_info %>%
+#   filter(sector == "Artisanal/Subsistence Fishing") %>%
+#   select(resp_id,atoll,island,number_of_ppl,name) %>%
+#   distinct() %>%
+#   group_by(atoll,island) %>%
+#   summarize(
+#     total_art = sum(number_of_ppl)
+#   )
+
+#########################
+
+full_fisher_table <- read_csv(file.path(maldives_dir,"outputs/data_for_report/all_fishing_tracking_table.csv"))
+
+fishers_table_targets <- full_fisher_table %>% #### OOHHH ok here is what's happening. the rec fishers are not showing up if there are no commercial fishers.
+  # mutate(
+  #   atoll = case_when(
+  #     island == "Kelaa" ~ "HA",
+  #     TRUE ~ atoll
+  #   )
+  # ) %>%
+  mutate(
+    total_art = ifelse(is.na(total_art),0,total_art),
+    total_rec = ifelse(is.na(total_rec),0,total_rec)
+  ) %>%
+  mutate(
+    island = str_replace(island,"[^[:alnum:]]","")
+  ) %>%  
+  full_join(fisher_targets, by = c("atoll","island")) %>%
+  dplyr::select(1:10,total_art,survey_target) %>%
+  arrange(survey_target) %>%
+  mutate(
+    Progress = round(
+      ((total_fishers_rep + total_art + total_rec)/survey_target)*100,
+      digits = 0),
+    Progress = ifelse(Progress > 100,100,Progress)
+  )
+
+# which islands are we missing from survey targets?
+
+repped_locs <- fishers_table_targets %>%
+  dplyr::select(atoll,island)
+
+survey_locs <- fisher_targets %>%
+  dplyr::select(atoll,island)
+
+missing_fishing_islands <- setdiff(survey_locs,repped_locs)
+
+test <- setdiff(repped_locs,survey_locs)
+
+# create dfs for bar graphs
+
+fishers_table_bar <- fishers_table_targets %>%
+  filter(!is.na(Progress)) %>%
+  arrange(-Progress) %>%
+  mutate(
+    Progress = ifelse(!is.na(survey_target),(color_bar("lightblue", proportion)(Progress)),NA),
+  ) %>%
+  dplyr::select(-total_resp,-Other)
+
+fishers_table_nobar <- fishers_table_targets %>%
+  filter(is.na(Progress)) %>%
+  arrange(-total_rec) %>%
+  dplyr::select(-total_resp, -survey_target, -Progress, -Other)
+
+write_csv(fishers_table_targets,
+          file.path(paste0(maldives_dir,"/outputs/data_for_report/fishers_table_targets",report_date,".csv")))
+
+
+total_pelagic <- sum(fishers_table_targets$Pelagic)
+
+total_reef <- sum(fishers_table_targets$Reef)
+
+
+
+knitr::kable(fishers_table_bar,
+             escape = F,
+             col.names = c("Atoll","Island","Pelagic","Reef", "Full Time", "Part Time","Comm Fishers Represented","Rec Fishers Represented","Artisanal Fishers Represented","Target","Progress"),
+             caption = "Commercial Fishers Breakdown") %>%
+  kable_styling(bootstrap_options = c("striped","hover")) %>%
+  #column_spec(7, width = "1cm") %>%
+  column_spec(11, width = "5cm") %>%
+  scroll_box(height = "900px",
+             width = "900px"
+             )
+
+knitr::kable(fishers_table_nobar,
+             escape = F,
+             col.names = c("Atoll","Island", "Pelagic","Reef", "Full Time", "Part Time","Total Fishers Represented","Rec Fishers Represented","Artisanal Fishers Represented"),
+             caption = "Commercial Fisher Responses - No Target and Missing Islands") %>%
+  kable_styling(bootstrap_options = c("striped","hover")) %>%
+  #column_spec(7, width = "1cm") %>%
+  #column_spec(12, width = "5cm") %>%
+  scroll_box(height = "900px",
+             width = "900px"
+             )
+
+
+
+
+```
+
+Of the  number of commercial fishers that have responded, **`r total_fulltime`** are full time fishers, **`r total_parttime`** are part time fishers, and **`r no_answer`** did not specify.
+
+- Note: We did not specifically ask fishers to identify themselves as pelagic or reef fishers, rather we calculated this information by extracting what species were fished for each shape drawn.
+
+<br>
+<br>
+```{r fisher_graph_2, echo = FALSE, message=FALSE, warning=FALSE}
+
+all_fishers_cumm <- all_fish_for_line %>% 
+  filter(count_type %in% c("Cumulative Responses","Cumulative Fishers Represented")) %>% 
+  mutate(
+    type = paste0(fisher_type,"-",count_type)
+  )
+  
+fish_progress_line <- ggplot(all_fishers_cumm, aes(x=week, y =N)) + 
+  geom_line(aes(color = fisher_type,
+                linetype = count_type
+                )) + 
+  scale_color_manual(values = c("orchid","lightblue", "steelblue","goldenrod1")) + 
+  labs(x = "Week Since Deployment", y = "N", color = "Fisher Type",linetype = "Count Type")+
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 11))+
+  #scale_y_continuous(expand = c(0,6000),breaks = round(seq(0, 6000, by = 1000),1))+
+  #scale_y_continuous(expand = c(0,6000), breaks = c(0,6000), by = 1000)+
+  scale_y_continuous(limits = c(0, 3000),
+                     breaks = seq(0,3000,100))+
+  #geom_hline(yintercept=1414, linetype='dotted', col = 'red')+
+  #annotate("text", x = 5, y = 1414, label = "~25% of Cumulative Fishers Survey Target", vjust = -0.5, size = 3)+
+  #geom_hline(yintercept=6161, linetype='dotted', col = 'red')+
+  #annotate("text", x = 5, y = 6161, label = "~50% of Population Survey Target", vjust = -0.5, size = 3)+
+  theme_minimal() 
+
+fish_progress_line
+
+ggsave(filename = "sepfish_progline.png",
+       device = "png",
+       path = "~/github/survey_results/maldives/outputs/figures",
+       width = 7,
+       height = 4,
+       units = "in",
+       dpi = 300)
+
+total_fishers_c <- all_fishers_cumm %>% 
+  group_by(week, count_type) %>% 
+  summarize(
+    N_combined = sum(N),
+  )
+
+TOTAL_fish_progress_line <- ggplot(total_fishers_c, aes(x=week, y =N_combined)) + 
+  geom_line(aes(linetype = count_type
+                ),
+            color = "aquamarine3") + 
+  #scale_color_manual(values = c("orchid","lightblue", "steelblue","goldenrod1")) + 
+  labs(x = "Week Since Deployment", y = "N",linetype = "Count Type")+
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 11))+
+  #scale_y_continuous(expand = c(0,6000),breaks = round(seq(0, 6000, by = 1000),1))+
+  #scale_y_continuous(expand = c(0,6000), breaks = c(0,6000), by = 1000)+
+  scale_y_continuous(limits = c(0, 7000),
+                     breaks = seq(0,7000,500))+
+  geom_hline(yintercept=5600, linetype='dotted', col = 'red')+
+  annotate("text", x = 5, y = 5600, label = "~ Cumulative Fishers Survey Target", vjust = -0.5, size = 3)+
+  #geom_hline(yintercept=6161, linetype='dotted', col = 'red')+
+  #annotate("text", x = 5, y = 6161, label = "~50% of Population Survey Target", vjust = -0.5, size = 3)+
+  theme_minimal() 
+
+
+TOTAL_fish_progress_line
+
+ggsave(filename = "allfish_progline.png",
+       device = "png",
+       path = "~/github/survey_results/maldives/outputs/figures",
+       width = 7,
+       height = 4,
+       units = "in",
+       dpi = 300)
+```
+
+
+
+#### Tuna fishing vessels surveyed:
+
+```{r tuna_vessels, echo=FALSE, message=FALSE, warning = FALSE }
+
+tuna_vessels <- read_csv(file.path(maldives_dir,"outputs/data_for_report/all_tuna_vessels.csv")) %>%
+  dplyr::select(
+    atoll,
+    island,
+    name_self,
+    resp_name,
+    facilitator_name,
+    vessel_id,
+    number_of_ppl,
+    date,
+    source,
+    -resp_id,
+    -part_full_time
+    ) %>%
+  mutate(
+    resp_name = ifelse(is.na(resp_name),
+                           cell_spec(resp_name,"html",color="lightgrey",bold = F),
+                           cell_spec(resp_name,"html",color="black",bold = F)),
+    facilitator_name = ifelse(is.na(facilitator_name),
+                           cell_spec(facilitator_name,"html",color="lightgrey",bold = F),
+                           cell_spec(facilitator_name,"html",color="black",bold = F))
+  )
+
+# add column styling
+
+knitr::kable(tuna_vessels,
+             escape = F,
+             col.names = c("Atoll","Island","Name", "Respondent Name","Facilitator Name","Vessel Name","Crew Size","Date","Source"),
+             caption = "Tuna Fishing Vessels Surveyed") %>%
+  kable_styling(bootstrap_options = c("striped","hover")) %>%
+  scroll_box(height = "600px")
+
+
+```
+
+  
+   
+
+#### Nontuna fishing commercial vessels surveyed: 
+
+``` {r non_tuna_vessels, echo=FALSE, message=FALSE, warning = FALSE}
+
+
+nontuna_vessels <- read_csv(file.path(maldives_dir,"outputs/data_for_report/all_nontuna_vessels.csv")) %>%
+  dplyr::select(
+    atoll,
+    island,
+    name,
+    resp_name,
+    facilitator_name,
+    vessel_id,
+    number_of_ppl,
+    date,
+    source,
+    -resp_id,
+    -part_full_time
+    ) %>%
+  mutate(
+    resp_name = ifelse(is.na(resp_name),
+                           cell_spec(resp_name,"html",color="lightgrey",bold = F),
+                           cell_spec(resp_name,"html",color="black",bold = F)),
+    facilitator_name = ifelse(is.na(facilitator_name),
+                           cell_spec(facilitator_name,"html",color="lightgrey",bold = F),
+                           cell_spec(facilitator_name,"html",color="black",bold = F))
+  )
+
+# add column styling
+
+knitr::kable(nontuna_vessels,
+             escape = F,
+             col.names = c("Atoll","Island","Name", "Respondent Name","Facilitator Name","Vessel Name","Crew Size","Date","Source"),
+             caption = "Non-Tuna Fishing Vessels Surveyed") %>%
+  kable_styling(bootstrap_options = c("striped","hover")) %>%
+  scroll_box(height = "600px")
+
+
+  
+```
+
+  
+  
+
+
+## Charter Boats
+
+
+```{r boat_charter, echo = FALSE, message = FALSE, warning = FALSE}
+
+total_boat_charters <- nrow(ss_charter_list)
+
+
+ 
+```
+
+We have collected responses from `r total_boat_charters` boat charters. See below for vessel names, the date surveyed and charter type.
+
+```{r boat_tbl, echo=FALSE, message=FALSE, warning = FALSE}
+
+# something is  weird with the dates here. 
+
+boatchart_tbl <- ss_charter_list %>%
+  mutate(resp_name = ifelse(is.na(resp_name),user_name,resp_name)) %>%
+  dplyr::select(
+    atoll,
+    island,
+    user_name,
+    resp_name,
+    facilitator_name,
+    vessel_id,
+    type,
+    length,
+    date,
+    -resp_id,
+    -user_name) %>%
+  mutate(
+    resp_name = ifelse(is.na(resp_name),
+                           cell_spec(resp_name,"html",color="lightgrey",bold = F),
+                           cell_spec(resp_name,"html",color="black",bold = F)),
+    facilitator_name = ifelse(is.na(facilitator_name),
+                           cell_spec(facilitator_name,"html",color="lightgrey",bold = F),
+                           cell_spec(facilitator_name,"html",color="black",bold = F))
+  )
+
+knitr::kable(boatchart_tbl,
+             escape = F,
+             col.names = c("Atoll","Island","Name", "Facilitator Name","Vessel Name","Type of Charter","Length","Date"),
+             caption = "Charter Boats Surveyed") %>%
+  kable_styling(bootstrap_options = c("striped","hover"))
+```
+
+  
+  
+
+
+## Guesthouses
+
+```{r no_guesthouse, echo = FALSE, message = FALSE, warning = FALSE }
+
+guesthouses <- read_csv(file.path(maldives_dir,"outputs/data_for_report/all_guesthouses.csv"))
+
+total_guesthouses <- as.numeric(nrow(guesthouses))
+
+new_guesthouses <- guesthouses %>%
+  filter(date > previous_dd) %>%
+  nrow()
+
+
+```
+
+We have collected responses from:
+
+- **`r total_guesthouses`** guesthouses total.
+
+Representatives from the following guesthouses have responded to the survey:
+
+```{r guesthouses, echo = FALSE, message = FALSE, warning = FALSE}
+
+# these we can sort or highlight by date
+
+guesthouses_tbl <- guesthouses %>%
+  dplyr::select(
+    atoll,
+    island,
+    name,
+    resp_name,
+    facilitator_name,
+    guesthouse_name,
+    number_of_ppl,
+    date,
+    -resp_id) %>%
+  mutate(
+    resp_name = ifelse(is.na(resp_name),
+                           cell_spec(resp_name,"html",color="lightgrey",bold = F),
+                           cell_spec(resp_name,"html",color="black",bold = F)),
+    facilitator_name = ifelse(is.na(facilitator_name),
+                           cell_spec(facilitator_name,"html",color="lightgrey",bold = F),
+                           cell_spec(facilitator_name,"html",color="black",bold = F))
+  )
+# 
+# # highlight column, sort by date or highlight by date to show new ones
+knitr::kable(guesthouses_tbl,
+             escape = F,
+             col.names = c("Atoll","Island","Name", "Respondent Name","Facilitator Name","No. of Respondents","Gueshouse Name","Date"),
+             caption = "Guesthouses Surveyed") %>%
+  kable_styling(bootstrap_options = c("striped","hover")) %>%
+  scroll_box(height = "800px")
+  
+
+```
+
